@@ -45,11 +45,7 @@ class ScanResult:
     scan_err: bool = False
 
     def merge(self, sr: "ScanResult"):
-        self.globals.extend(sr.globals)
-        self.scanned_files += sr.scanned_files
-        self.issues_count += sr.issues_count
-        self.infected_files += sr.infected_files
-        self.scan_err = self.scan_err or sr.scan_err
+        pass
 
 
 @dataclass
@@ -260,137 +256,15 @@ _numpy_magic_bytes = b"\x93NUMPY"
 
 
 def _is_7z_file(f: IO[bytes]) -> bool:
-    read_bytes = []
-    start = f.tell()
-
-    byte = f.read(1)
-    while byte != b"":
-        read_bytes.append(byte)
-        if len(read_bytes) == 6:
-            break
-        byte = f.read(1)
-    f.seek(start)
-
-    local_header_magic_number = [b"7", b"z", b"\xbc", b"\xaf", b"\x27", b"\x1c"]
-    return read_bytes == local_header_magic_number
+    pass
 
 
 def _http_get(url) -> bytes:
-    _log.debug(f"Request: GET {url}")
-
-    parsed_url = urllib.parse.urlparse(url)
-    path_and_query = parsed_url.path + ("?" + parsed_url.query if len(parsed_url.query) > 0 else "")
-
-    conn = http.client.HTTPSConnection(parsed_url.netloc)
-    try:
-        conn.request("GET", path_and_query)
-        response = conn.getresponse()
-        _log.debug(f"Response: status code {response.status} reason {response.reason}")
-        if response.status == 302:  # Follow redirections
-            return _http_get(response.headers["Location"])
-        elif response.status >= 400:
-            raise RuntimeError(
-                f"HTTP {response.status} ({response.reason}) calling GET {parsed_url.scheme}://{parsed_url.netloc}{path_and_query}"
-            )
-        return response.read()
-    finally:
-        conn.close()
+    pass
 
 
 def _list_globals(data: IO[bytes], multiple_pickles=True) -> Set[Tuple[str, str]]:
-    globals = set()
-
-    memo = {}
-    # Scan the data for pickle buffers, stopping when parsing fails or stops making progress
-    last_byte = b"dummy"
-    parsing_pkl_error = None
-    while last_byte != b"":
-        # List opcodes
-        ops = []
-        try:
-            for op in pickletools.genops(data):
-                ops.append(op)
-        except Exception as e:
-            _log.debug(f"Error parsing pickle: {e}", exc_info=True)
-            parsing_pkl_error = str(e)
-        last_byte = data.read(1)
-        data.seek(-1, 1)
-
-        # Extract global imports
-        for n in range(len(ops)):
-            op = ops[n]
-            op_name = op[0].name
-            op_value = op[1]
-
-            if op_name == "MEMOIZE" and n > 0:
-                memo[len(memo)] = ops[n - 1][1]
-            elif op_name in ["PUT", "BINPUT", "LONG_BINPUT"] and n > 0:
-                memo[op_value] = ops[n - 1][1]
-            elif op_name in ("GLOBAL", "INST"):
-                globals.add(tuple(op_value.split(" ", 1)))
-            elif op_name == "STACK_GLOBAL":
-                values = []
-                for offset in range(1, n + 1):
-                    if ops[n - offset][0].name in [
-                        "MEMOIZE",
-                        "PUT",
-                        "BINPUT",
-                        "LONG_BINPUT",
-                    ]:
-                        continue
-                    if ops[n - offset][0].name in ["GET", "BINGET", "LONG_BINGET"]:
-                        try:
-                            memo_key = int(ops[n - offset][1])
-                        except (ValueError, TypeError, IndexError) as e:
-                            _log.debug(f"Invalid memo key at position {n - offset}: (error: {e}), treating as unknown")
-                            values.append("unknown")
-                            continue
-
-                        if memo_key not in memo:
-                            _log.debug(
-                                f"Memo key {memo_key} not found at position {n - offset}, treating as unknown (potential evasion attempt)"
-                            )
-                            values.append("unknown")
-                        else:
-                            memo_value = memo[memo_key]
-                            # Normalize memo value to string to prevent type confusion
-                            if not isinstance(memo_value, str):
-                                _log.debug(
-                                    f"Memo value at position {n - offset} is not a string (type: {type(memo_value).__name__}), casting to string"
-                                )
-                                memo_value = str(memo_value)
-                            values.append(memo_value)
-                    elif ops[n - offset][0].name not in [
-                        "SHORT_BINUNICODE",
-                        "UNICODE",
-                        "BINUNICODE",
-                        "BINUNICODE8",
-                        "STRING",
-                        "BINSTRING",
-                        "SHORT_BINSTRING",
-                    ]:
-                        _log.debug("Presence of non-string opcode, categorizing as an unknown dangerous import")
-                        values.append("unknown")
-                    else:
-                        values.append(ops[n - offset][1])
-                    if len(values) == 2:
-                        break
-                if len(values) != 2:
-                    raise ValueError(f"Found {len(values)} values for STACK_GLOBAL at position {n} instead of 2.")
-                globals.add((values[1], values[0]))
-
-        if not multiple_pickles:
-            break
-
-        if parsing_pkl_error is not None:
-            # XXX: given we can have multiple pickles in a file, we may have already successfully extracted globals from a valid pickle.
-            # Thus return the already found globals in the error & let the caller decide what to do.
-            # Additionally, we return the error at the end of the loop to scan imports in partially broken files,
-            # which can unpickle and be dangerous regardless of being valid pickle.
-            globals_opt = globals if len(globals) > 0 else None
-            raise GenOpsError(parsing_pkl_error, globals_opt)
-
-    return globals
+    pass
 
 
 def _build_scan_result_from_raw_globals(
@@ -398,304 +272,51 @@ def _build_scan_result_from_raw_globals(
     file_id,
     scan_err=False,
 ) -> ScanResult:
-    globals = []
-    issues_count = 0
-    for rg in raw_globals:
-        g = Global(rg[0], rg[1], SafetyLevel.Dangerous)
-        safe_filter = _safe_globals.get(g.module)
-        unsafe_filter = _unsafe_globals.get(g.module)
-
-        # If any parent module is marked as dangerous with "*", submodules are also dangerous
-        if unsafe_filter is None and "." in g.module:
-            module_parts = g.module.split(".")
-            for i in range(1, len(module_parts)):
-                parent_module = ".".join(module_parts[:i])
-                if _unsafe_globals.get(parent_module) == "*":
-                    unsafe_filter = "*"
-                    break
-
-        if "unknown" in g.module or "unknown" in g.name:
-            g.safety = SafetyLevel.Dangerous
-            _log.warning("%s: %s import '%s %s' FOUND", file_id, g.safety.value, g.module, g.name)
-            issues_count += 1
-        elif unsafe_filter is not None and (unsafe_filter == "*" or g.name in unsafe_filter):
-            g.safety = SafetyLevel.Dangerous
-            _log.warning("%s: %s import '%s %s' FOUND", file_id, g.safety.value, g.module, g.name)
-            issues_count += 1
-        elif safe_filter is not None and (safe_filter == "*" or g.name in safe_filter):
-            g.safety = SafetyLevel.Innocuous
-        else:
-            g.safety = SafetyLevel.Suspicious
-        globals.append(g)
-
-    return ScanResult(globals, 1, issues_count, 1 if issues_count > 0 else 0, scan_err)
+    pass
 
 
 def scan_pickle_bytes(data: IO[bytes], file_id, multiple_pickles=True) -> ScanResult:
     """Disassemble a Pickle stream and report issues"""
-    _log.debug(f"scan_pickle_bytes({file_id})")
-
-    try:
-        raw_globals = _list_globals(data, multiple_pickles)
-    except GenOpsError as e:
-        if e.globals is not None:
-            # Found some globals before error - could be a malicious partial pickle
-            _log.error(f"ERROR: parsing pickle in {file_id}: {e}", exc_info=_log.isEnabledFor(logging.DEBUG))
-            return _build_scan_result_from_raw_globals(e.globals, file_id, scan_err=True)
-        else:
-            # No globals found - likely not a pickle file at all
-            _log.warning(f"WARNING: could not parse {file_id} as pickle: {e}")
-            return ScanResult([], scanned_files=1, scan_err=False)
-
-    _log.debug("Global imports in %s: %s", file_id, raw_globals)
-
-    return _build_scan_result_from_raw_globals(raw_globals, file_id)
+    pass
 
 
 # XXX: it appears there is not way to get the byte stream for a given file within the 7z archive and thus forcing us to unzip to disk before scanning
 def scan_7z_bytes(data: IO[bytes], file_id) -> ScanResult:
-    _log.debug(f"scan_7z_bytes({file_id})")
-
-    try:
-        import py7zr
-    except ImportError:
-        raise Exception("py7zr is required to scan 7z archives, install picklescan using: 'pip install picklescan[7z]'")
-    result = ScanResult([])
-
-    with py7zr.SevenZipFile(data, mode="r") as archive:
-        file_names = archive.getnames()
-        targets = [f for f in file_names if f.endswith(tuple(_pickle_file_extensions))]
-        _log.debug("Files in 7z archive %s: %s", file_id, targets)
-        with TemporaryDirectory() as tmpdir:
-            archive.extract(path=tmpdir, targets=targets)
-            for file_name in targets:
-                file_path = os.path.join(tmpdir, file_name)
-                _log.debug("Scanning file %s in 7z archive %s", file_name, file_id)
-                if os.path.isfile(file_path):
-                    result.merge(scan_file_path(file_path))
-
-            return result
+    pass
 
 
 def scan_zip_bytes(data: IO[bytes], file_id) -> ScanResult:
-    _log.debug(f"scan_zip_bytes({file_id})")
-
-    result = ScanResult([])
-
-    with RelaxedZipFile(data, "r") as zip:
-        file_names = zip.namelist()
-        _log.debug("Files in zip archive %s: %s", file_id, file_names)
-        for file_name in file_names:
-            try:
-                with zip.open(file_name, "r") as file:
-                    magic_bytes = file.read(8)
-                file_ext = os.path.splitext(file_name)[1]
-
-                if file_ext in _pickle_file_extensions or any(magic_bytes.startswith(mn) for mn in _pickle_magic_bytes):
-                    _log.debug("Scanning file %s in zip archive %s", file_name, file_id)
-                    with zip.open(file_name, "r") as file:
-                        result.merge(scan_pickle_bytes(file, f"{file_id}:{file_name}"))
-
-                elif file_ext in _numpy_file_extensions or magic_bytes.startswith(_numpy_magic_bytes):
-                    _log.debug("Scanning file %s in zip archive %s", file_name, file_id)
-                    with zip.open(file_name, "r") as file:
-                        result.merge(scan_numpy(file, f"{file_id}:{file_name}"))
-            except (zipfile.BadZipFile, RuntimeError) as e:
-                # Log decompression issues (password protected, corrupted, etc.)
-                _log.warning("Invalid file %s in zip archive %s: %s", file_name, file_id, str(e))
-
-    return result
+    pass
 
 
 def scan_numpy(data: IO[bytes], file_id) -> ScanResult:
-    _log.debug(f"scan_numpy({file_id})")
-
-    # Delay import to avoid dependency on NumPy
-    import numpy as np
-
-    # Code to distinguish from NumPy binary files and pickles.
-    _ZIP_PREFIX = b"PK\x03\x04"
-    _ZIP_SUFFIX = b"PK\x05\x06"  # empty zip files start with this
-    N = len(np.lib.format.MAGIC_PREFIX)
-    magic = data.read(N)
-    # If the file size is less than N, we need to make sure not
-    # to seek past the beginning of the file
-    data.seek(-min(N, len(magic)), 1)  # back-up
-    if magic.startswith(_ZIP_PREFIX) or magic.startswith(_ZIP_SUFFIX):
-        # .npz file
-        raise ValueError(f".npz file not handled as zip file: {file_id}")
-    elif magic == np.lib.format.MAGIC_PREFIX:
-        # .npy file
-
-        version = np.lib.format.read_magic(data)
-        if version == (1, 0):
-            _, _, dtype = np.lib.format.read_array_header_1_0(data)
-        elif version in [(2, 0), (3, 0)]:
-            _, _, dtype = np.lib.format.read_array_header_2_0(data)
-        else:
-            raise ValueError(f"Unsupported numpy format version: {version}")
-
-        if dtype.hasobject:
-            return scan_pickle_bytes(data, file_id)
-        else:
-            return ScanResult([], 1)
-    else:
-        return scan_pickle_bytes(data, file_id)
+    pass
 
 
 def scan_pytorch(data: IO[bytes], file_id) -> ScanResult:
-    _log.debug(f"scan_pytorch({file_id})")
-
-    # new pytorch format
-    if _is_zipfile(data):
-        return scan_zip_bytes(data, file_id)
-    elif _is_7z_file(data):
-        return scan_7z_bytes(data, file_id)
-    # old pytorch format
-    else:
-        scan_result = ScanResult([])
-        should_read_directly = _should_read_directly(data)
-        if should_read_directly and data.tell() == 0:
-            # try loading from tar
-            try:
-                # TODO: implement loading from tar
-                raise TarError()
-            except TarError:
-                # file does not contain a tar
-                data.seek(0)
-
-        magic = get_magic_number(data)
-        if magic != MAGIC_NUMBER:
-            # Magic number doesn't match or can't be extracted (None).
-            # This could be a bypass attempt where the magic number is
-            # embedded via __reduce__ (e.g., eval('MAGIC_NUMBER')) instead
-            # of a literal INT/LONG. Scan the first pickle to check for
-            # dangerous globals -- a legitimate magic pickle contains only
-            # a simple integer and should have zero globals.
-            data.seek(0)
-            first_pickle_result = scan_pickle_bytes(data, file_id, multiple_pickles=False)
-            if first_pickle_result.globals:
-                _log.debug(
-                    f"Potential PyTorch magic number bypass detected in {file_id}. Ignoring magic number and treating file as a pickle."
-                )
-                scan_result.merge(first_pickle_result)
-            else:
-                raise InvalidMagicError(magic, MAGIC_NUMBER, file_id)
-
-        for _ in range(5):
-            scan_result.merge(scan_pickle_bytes(data, file_id, multiple_pickles=False))
-        scan_result.scanned_files = 1
-        scan_result.infected_files = min(1, scan_result.infected_files)
-        return scan_result
+    pass
 
 
 def scan_bytes(data: IO[bytes], file_id, file_ext: Optional[str] = None) -> ScanResult:
-    _log.debug(f"scan_bytes({file_id})")
-
-    if file_ext is not None and file_ext in _pytorch_file_extensions:
-        try:
-            return scan_pytorch(data, file_id)
-        except InvalidMagicError as e:
-            _log.warning(
-                f"WARNING: Invalid PyTorch magic number for file {e}. Trying to scan as non-PyTorch file.",
-                exc_info=_log.isEnabledFor(logging.DEBUG),
-            )
-            data.seek(0)
-
-    if file_ext is not None and file_ext in _numpy_file_extensions:
-        return scan_numpy(data, file_id)
-
-    is_zip = zipfile.is_zipfile(data)
-    data.seek(0)
-    if is_zip:
-        return scan_zip_bytes(data, file_id)
-    elif _is_7z_file(data):
-        return scan_7z_bytes(data, file_id)
-    else:
-        return scan_pickle_bytes(data, file_id)
+    pass
 
 
 def scan_huggingface_model(repo_id):
-    _log.debug(f"scan_huggingface_model({repo_id})")
-
-    # List model files
-    model = json.loads(_http_get(f"https://huggingface.co/api/models/{repo_id}").decode("utf-8"))
-    file_names = [file_name for file_name in (sibling.get("rfilename") for sibling in model["siblings"]) if file_name is not None]
-
-    # Scan model files
-    scan_result = ScanResult([])
-    for file_name in file_names:
-        file_ext = os.path.splitext(file_name)[1]
-        if file_ext not in _zip_file_extensions and file_ext not in _pickle_file_extensions and file_ext not in _pytorch_file_extensions:
-            continue
-        _log.debug("Scanning file %s in model %s", file_name, repo_id)
-        url = f"https://huggingface.co/{repo_id}/resolve/main/{file_name}"
-        data = io.BytesIO(_http_get(url))
-        scan_result.merge(scan_bytes(data, url, file_ext))
-
-    return scan_result
+    pass
 
 
 def _matches_any(patterns: List[re.Pattern], text: str) -> bool:
     """Return True if *text* matches at least one compiled regex in *patterns*."""
-    return any(p.search(text) for p in patterns)
+    pass
 
 
 def scan_directory_path(path, scan_filter: Optional[ScanFilter] = None) -> ScanResult:
-    _log.debug(f"scan_directory_path({path})")
-
-    scan_result = ScanResult([])
-
-    for base_path, dir_names, file_names in os.walk(path):
-        # --- directory filtering (prune in-place so os.walk skips them) ---
-        if scan_filter is not None:
-            filtered_dirs = []
-            for d in dir_names:
-                dir_path = os.path.join(base_path, d)
-                if _matches_any(scan_filter.exclude_dir, dir_path):
-                    _log.debug("Excluding directory %s (matched --exclude-dir)", dir_path)
-                    continue
-                if scan_filter.include_dir and not _matches_any(scan_filter.include_dir, dir_path):
-                    _log.debug("Skipping directory %s (no --include-dir match)", dir_path)
-                    continue
-                filtered_dirs.append(d)
-            dir_names[:] = filtered_dirs
-
-        for file_name in file_names:
-            file_ext = os.path.splitext(file_name)[1]
-            if (
-                file_ext not in _zip_file_extensions
-                and file_ext not in _pickle_file_extensions
-                and file_ext not in _pytorch_file_extensions
-            ):
-                continue
-            file_path = os.path.join(base_path, file_name)
-
-            # --- file filtering ---
-            if scan_filter is not None:
-                if _matches_any(scan_filter.exclude, file_path):
-                    _log.debug("Excluding file %s (matched --exclude)", file_path)
-                    continue
-                if scan_filter.include and not _matches_any(scan_filter.include, file_path):
-                    _log.debug("Skipping file %s (no --include match)", file_path)
-                    continue
-
-            _log.debug("Scanning file %s", file_path)
-            with open(file_path, "rb") as file:
-                scan_result.merge(scan_bytes(file, file_path, file_ext))
-
-    return scan_result
+    pass
 
 
 def scan_file_path(path) -> ScanResult:
-    _log.debug(f"scan_file_path({path})")
-
-    file_ext = os.path.splitext(path)[1]
-    with open(path, "rb") as file:
-        return scan_bytes(file, path, file_ext)
+    pass
 
 
 def scan_url(url) -> ScanResult:
-    _log.debug(f"scan_url({url})")
-
-    return scan_bytes(io.BytesIO(_http_get(url)), url)
+    pass
